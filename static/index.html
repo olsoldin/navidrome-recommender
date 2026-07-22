@@ -65,7 +65,12 @@
 
     <div class="genre-panel">
       <h2 class="panel-title">Genre balance</h2>
+      <p class="panel-sub">Weight how much each genre influences which artists get used as seeds for finding recommendations. 1.0x is neutral.</p>
       <div class="meter" id="genreMeter"></div>
+      <div class="genre-actions">
+        <button id="applyWeightsBtn" class="btn-secondary hidden">Re-analyze with these weights</button>
+        <button id="resetWeightsBtn" class="btn-link hidden">Reset to 1.0x</button>
+      </div>
     </div>
 
     <div class="seeds-panel">

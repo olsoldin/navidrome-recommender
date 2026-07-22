@@ -128,12 +128,39 @@ class RecommendationEngine:
             time.sleep(0.3)
         return results
 
+    def _artist_genre_multipliers(
+        self,
+        client: SubsonicClient,
+        genre_weights: Dict[str, float],
+        progress: Callable[[str], None],
+    ) -> Dict[str, float]:
+        """Fetch which artists belong to each *non-neutral* weighted genre
+        (skipping any genre left at 1.0x, since it wouldn't change
+        anything) and return artist name -> combined multiplier. An
+        artist tagged under more than one weighted genre gets the average
+        of those weights; an artist matching none of them is left out
+        entirely, and callers should treat that as neutral (1.0x)."""
+        hits: Dict[str, List[float]] = {}
+        active = {g: w for g, w in (genre_weights or {}).items() if abs(w - 1.0) > 1e-6}
+        for genre_name, weight in active.items():
+            progress(f"Applying genre weight for {genre_name} ({weight:.1f}x)...")
+            try:
+                albums = client.get_albums_by_genre(genre_name, size=500)
+            except Exception:
+                continue
+            for album in albums:
+                name = album.get("artist")
+                if name:
+                    hits.setdefault(name, []).append(weight)
+        return {name: sum(ws) / len(ws) for name, ws in hits.items()}
+
     def build_recommendations(
         self,
         client: SubsonicClient,
         progress: Callable[[str], None] = lambda msg: None,
         top_n_seeds: int = 15,
         max_recommendations: int = 30,
+        genre_weights: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
         progress("Reading your library...")
         artists = client.get_artists()
@@ -179,7 +206,15 @@ class RecommendationEngine:
                 play_scores[name] = play_scores.get(name, 0.0) + 3
 
         has_real_play_data = bool(play_scores) and max(play_scores.values()) > 0
+
+        artist_multipliers: Dict[str, float] = {}
+        if genre_weights:
+            artist_multipliers = self._artist_genre_multipliers(client, genre_weights, progress)
+
         if has_real_play_data:
+            if artist_multipliers:
+                for name in list(play_scores.keys()):
+                    play_scores[name] *= artist_multipliers.get(name, 1.0)
             seeds = sorted(play_scores.items(), key=lambda kv: kv[1], reverse=True)[:top_n_seeds]
         else:
             # No usable play-count or starred data (common if listens happen
@@ -190,7 +225,10 @@ class RecommendationEngine:
             # album count as a rough proxy for "artists you're invested in."
             progress("No play history found — sampling across your library instead...")
             pool = [a for a in artists if a.get("name")]
-            weights = [max(1, int(a.get("albumCount", 1) or 1)) for a in pool]
+            weights = [
+                max(0.001, max(1, int(a.get("albumCount", 1) or 1)) * artist_multipliers.get(a["name"], 1.0))
+                for a in pool
+            ]
             sample_size = min(top_n_seeds, len(pool))
             chosen: List[Dict[str, Any]] = []
             chosen_names = set()

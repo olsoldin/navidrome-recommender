@@ -1,4 +1,6 @@
 const scanBtn = document.getElementById('scanBtn');
+const applyWeightsBtn = document.getElementById('applyWeightsBtn');
+const resetWeightsBtn = document.getElementById('resetWeightsBtn');
 const notConfigured = document.getElementById('notConfigured');
 const consoleEl = document.getElementById('console');
 const consoleLine = document.getElementById('consoleLine');
@@ -7,6 +9,13 @@ const errorMessage = document.getElementById('errorMessage');
 const results = document.getElementById('results');
 const connDot = document.getElementById('connDot');
 const connLabel = document.getElementById('connLabel');
+
+let genreWeights = {}; // genre name -> weight (0 - 2, 1.0 = neutral)
+let lastGenres = [];   // last genre list rendered, for reset
+
+function slugify(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
 
 function mbLink(mbid) {
   return mbid ? `https://musicbrainz.org/artist/${mbid}` : null;
@@ -42,31 +51,67 @@ function showError(message) {
   errorCard.classList.remove('hidden');
   scanBtn.disabled = false;
   scanBtn.textContent = 'Try again';
+  applyWeightsBtn.disabled = false;
 }
 
 function renderGenres(genres) {
+  lastGenres = genres;
   const meter = document.getElementById('genreMeter');
   meter.innerHTML = '';
   if (!genres.length) {
     meter.innerHTML = '<p class="empty-note">No genre tags found in your library yet.</p>';
+    applyWeightsBtn.classList.add('hidden');
+    resetWeightsBtn.classList.add('hidden');
     return;
   }
   const max = Math.max(...genres.map(g => g.songCount));
   genres.forEach(g => {
+    const weight = genreWeights[g.name] !== undefined ? genreWeights[g.name] : 1.0;
+    genreWeights[g.name] = weight;
+    const slug = slugify(g.name);
     const row = document.createElement('div');
     row.className = 'meter-row';
     row.innerHTML = `
-      <span class="meter-name">${g.name}</span>
-      <span class="meter-track"><span class="meter-fill" data-pct="${(g.songCount / max) * 100}"></span></span>
-      <span class="meter-count">${g.songCount}</span>
+      <div class="meter-row-head">
+        <span class="meter-name">${g.name}</span>
+        <span class="meter-count">${g.songCount} tracks</span>
+      </div>
+      <div class="meter-track"><span class="meter-fill" data-pct="${(g.songCount / max) * 100}"></span></div>
+      <div class="meter-row-control">
+        <input type="range" class="genre-slider" min="0" max="2" step="0.1"
+               value="${weight}" data-genre="${g.name}" id="slider-${slug}"
+               aria-label="Weight for ${g.name}">
+        <span class="genre-weight-label" id="weightLabel-${slug}">${weight.toFixed(1)}x</span>
+      </div>
     `;
     meter.appendChild(row);
   });
-  // animate after insertion
+  // animate the reference bars in after insertion
   requestAnimationFrame(() => {
     meter.querySelectorAll('.meter-fill').forEach(el => {
       el.style.width = el.dataset.pct + '%';
     });
+  });
+  meter.querySelectorAll('.genre-slider').forEach(slider => {
+    slider.addEventListener('input', (e) => {
+      const genre = e.target.dataset.genre;
+      const val = parseFloat(e.target.value);
+      genreWeights[genre] = val;
+      document.getElementById(`weightLabel-${slugify(genre)}`).textContent = val.toFixed(1) + 'x';
+    });
+  });
+  applyWeightsBtn.classList.remove('hidden');
+  resetWeightsBtn.classList.remove('hidden');
+}
+
+function resetWeights() {
+  lastGenres.forEach(g => {
+    genreWeights[g.name] = 1.0;
+    const slug = slugify(g.name);
+    const slider = document.getElementById(`slider-${slug}`);
+    const label = document.getElementById(`weightLabel-${slug}`);
+    if (slider) slider.value = 1.0;
+    if (label) label.textContent = '1.0x';
   });
 }
 
@@ -155,10 +200,12 @@ async function pollJob(jobId) {
   results.classList.remove('hidden');
   scanBtn.disabled = false;
   scanBtn.textContent = 'Analyze again';
+  applyWeightsBtn.disabled = false;
 }
 
 async function startScan() {
   scanBtn.disabled = true;
+  applyWeightsBtn.disabled = true;
   scanBtn.textContent = 'Working...';
   errorCard.classList.add('hidden');
   results.classList.add('hidden');
@@ -166,7 +213,11 @@ async function startScan() {
   consoleLine.textContent = '> starting up...';
 
   try {
-    const res = await fetch('/api/scan', { method: 'POST' });
+    const res = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ genre_weights: genreWeights }),
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || 'Could not start the scan.');
@@ -179,5 +230,7 @@ async function startScan() {
 }
 
 scanBtn.addEventListener('click', startScan);
+applyWeightsBtn.addEventListener('click', startScan);
+resetWeightsBtn.addEventListener('click', resetWeights);
 scanBtn.disabled = true;
 checkHealth();

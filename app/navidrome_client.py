@@ -71,6 +71,10 @@ class SubsonicClient:
         data = self._get("getAlbumList2", {"type": list_type, "size": size, "offset": offset})
         return data.get("albumList2", {}).get("album", []) or []
 
+    def get_albums_by_genre(self, genre: str, size: int = 500) -> List[Dict[str, Any]]:
+        data = self._get("getAlbumList2", {"type": "byGenre", "genre": genre, "size": size})
+        return data.get("albumList2", {}).get("album", []) or []
+
     def get_starred2(self) -> Dict[str, Any]:
         data = self._get("getStarred2")
         return data.get("starred2", {}) or {}
