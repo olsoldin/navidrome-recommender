@@ -69,7 +69,13 @@
     </div>
 
     <div class="seeds-panel">
-      <h2 class="panel-title">Based on heavy rotation of</h2>
+      <h2 class="panel-title" id="seedsTitle">Based on heavy rotation of</h2>
+      <p class="empty-note hidden" id="seedsFallbackNote">
+        Navidrome didn't have play-count or starred data for your library
+        (this happens if you listen through a client that doesn't scrobble
+        back to it), so these were sampled across your library instead,
+        weighted toward artists you have more albums by.
+      </p>
       <div class="chip-row" id="seedChips"></div>
     </div>
 

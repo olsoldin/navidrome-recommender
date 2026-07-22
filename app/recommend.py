@@ -13,6 +13,7 @@ MusicBrainz asks anonymous callers to stay near 1 request/second, so
 lookups are cached to disk and paced accordingly.
 """
 import json
+import random
 import re
 import time
 from pathlib import Path
@@ -140,10 +141,16 @@ class RecommendationEngine:
 
         progress("Checking play history...")
         play_scores: Dict[str, float] = {}
+        diagnostics: Dict[str, Any] = {}
         try:
             frequent = client.get_album_list2("frequent", size=500)
-        except Exception:
+            diagnostics["frequent_albums_returned"] = len(frequent)
+            diagnostics["frequent_albums_with_playcount"] = sum(
+                1 for a in frequent if (a.get("playCount") or 0) > 0
+            )
+        except Exception as e:
             frequent = []
+            diagnostics["frequent_error"] = str(e)
         for album in frequent:
             name = album.get("artist")
             if name:
@@ -152,8 +159,12 @@ class RecommendationEngine:
         progress("Checking starred favorites...")
         try:
             starred = client.get_starred2()
-        except Exception:
+            diagnostics["starred_albums"] = len(starred.get("album") or [])
+            diagnostics["starred_artists"] = len(starred.get("artist") or [])
+            diagnostics["starred_songs"] = len(starred.get("song") or [])
+        except Exception as e:
             starred = {}
+            diagnostics["starred_error"] = str(e)
         for album in starred.get("album", []) or []:
             name = album.get("artist")
             if name:
@@ -167,11 +178,32 @@ class RecommendationEngine:
             if name:
                 play_scores[name] = play_scores.get(name, 0.0) + 3
 
-        if play_scores:
+        has_real_play_data = bool(play_scores) and max(play_scores.values()) > 0
+        if has_real_play_data:
             seeds = sorted(play_scores.items(), key=lambda kv: kv[1], reverse=True)[:top_n_seeds]
         else:
-            # Brand new library with no play history yet — just sample it
-            seeds = [(a["name"], 1.0) for a in artists[:top_n_seeds] if a.get("name")]
+            # No usable play-count or starred data (common if listens happen
+            # through a client that doesn't report back to Navidrome, or the
+            # library is brand new). Sample across the whole library instead
+            # of just taking the first N — which, sorted alphabetically,
+            # skews toward names starting with digits/symbols. Weight by
+            # album count as a rough proxy for "artists you're invested in."
+            progress("No play history found — sampling across your library instead...")
+            pool = [a for a in artists if a.get("name")]
+            weights = [max(1, int(a.get("albumCount", 1) or 1)) for a in pool]
+            sample_size = min(top_n_seeds, len(pool))
+            chosen: List[Dict[str, Any]] = []
+            chosen_names = set()
+            pool_copy, weights_copy = list(pool), list(weights)
+            while len(chosen) < sample_size and pool_copy:
+                picked = random.choices(pool_copy, weights=weights_copy, k=1)[0]
+                idx = pool_copy.index(picked)
+                pool_copy.pop(idx)
+                weights_copy.pop(idx)
+                if picked["name"] not in chosen_names:
+                    chosen.append(picked)
+                    chosen_names.add(picked["name"])
+            seeds = [(a["name"], 1.0) for a in chosen]
         seed_names = [s[0] for s in seeds]
         seed_weight = dict(seeds)
         max_seed_score = max(seed_weight.values()) if seed_weight else 1.0
@@ -220,5 +252,7 @@ class RecommendationEngine:
             "library_artist_count": len(artists),
             "top_genres": top_genres,
             "seed_artists": seed_names,
+            "used_play_history": has_real_play_data,
+            "diagnostics": diagnostics,
             "recommendations": ranked,
         }

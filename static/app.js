@@ -130,6 +130,27 @@ async function pollJob(jobId) {
   document.getElementById('statRecCount').textContent = data.recommendations.length;
   renderGenres(data.top_genres);
   renderSeeds(data.seed_artists);
+  document.getElementById('seedsTitle').textContent = data.used_play_history
+    ? 'Based on heavy rotation of'
+    : 'Sampled from your library';
+  const fallbackNote = document.getElementById('seedsFallbackNote');
+  fallbackNote.classList.toggle('hidden', data.used_play_history);
+  if (!data.used_play_history && data.diagnostics) {
+    const d = data.diagnostics;
+    const lines = [];
+    if (d.frequent_error) lines.push(`"most played" lookup failed: ${d.frequent_error}`);
+    else lines.push(`"most played" lookup returned ${d.frequent_albums_returned ?? 0} albums, ${d.frequent_albums_with_playcount ?? 0} with a play count > 0`);
+    if (d.starred_error) lines.push(`starred lookup failed: ${d.starred_error}`);
+    else lines.push(`starred: ${d.starred_albums ?? 0} albums, ${d.starred_artists ?? 0} artists, ${d.starred_songs ?? 0} songs`);
+    fallbackNote.innerHTML = `
+      Navidrome didn't return usable play-count or starred data for the
+      account in <code>.env</code>, so these were sampled across your
+      library instead. Diagnostics:<br><code style="display:block;margin-top:8px;white-space:pre-wrap;">${lines.join('\n')}</code>
+      <br>Navidrome tracks play counts per account — if the username in
+      <code>.env</code> differs from the one you're logged in as on the web
+      UI, that alone would explain this.
+    `;
+  }
   renderRecommendations(data.recommendations);
   results.classList.remove('hidden');
   scanBtn.disabled = false;
